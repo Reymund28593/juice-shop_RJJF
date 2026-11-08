@@ -64,7 +64,7 @@ jobs:
       # (tsc): a compile error now fails the pipeline.
       - name: Compile (resolve dependencies + build)
         run: |
-          jf npm ci
+          jf npm install --omit=dev
           npm run build:server
 
       # ---- 4b TEST (existing tests, none written by us) ----
