@@ -62,18 +62,10 @@ jobs:
       # "npm ci" runs Juice Shop's postinstall script: it installs the frontend dependencies and builds frontend + server.
       # postinstall tolerates server build errors ("|| cd ."), so the server is compiled again explicitly and strictly
       # (tsc): a compile error now fails the pipeline.
-      - name: Configure npm → Artifactory
-        run: jf npm-config --repo-resolve=${{ env.NPM_VIRTUAL }}
-
-      - name: Install dependencies (inkl. devDependencies)
-        run: jf npm install --ignore-scripts
-  # --ignore-scripts verhindert das kaputte postinstall-Skript von Juice Shop
-
-      - name: Build server
-        run: npm run build:server --if-present
-
-      - name: Run tests
-        run: npm run test:server
+      - name: Compile (resolve dependencies + build)
+        run: |
+          jf npm ci
+          npm run build:server
 
       # ---- 4b TEST (existing tests, none written by us) ----
       # Server unit tests (Node built-in test runner). "npm test" would also start frontend + API tests (browser/running server).
