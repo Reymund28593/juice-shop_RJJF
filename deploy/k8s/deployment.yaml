@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: juice-shop
+  labels: { app: juice-shop }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: juice-shop }
+  template:
+    metadata:
+      labels: { app: juice-shop }
+    spec:
+      # imagePullSecrets:            # only needed when pulling from the private Artifactory registry
+      #   - name: artifactory-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: juice-shop
+          image: REPLACE_ME/juice-docker-prod-local/juice-shop:REPLACE_TAG   # or juice-shop:local for kind/minikube
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            httpGet: { path: /rest/admin/application-version, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /rest/admin/application-version, port: 3000 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            # Juice Shop writes logs/data at runtime, so the root FS stays writable.
+            readOnlyRootFilesystem: false

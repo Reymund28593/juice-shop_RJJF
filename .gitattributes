@@ -1,2 +1,10 @@
-# Handle line endings for .junie directory
-.junie/** text eol=lf
+# Keep LF line endings for files that run on Linux (GitHub runner, containers), even if committed from Windows
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+Dockerfile text eol=lf
+# Keep LF line endings for files that run on Linux (GitHub runner, containers), even if committed from Windows
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+Dockerfile text eol=lf
