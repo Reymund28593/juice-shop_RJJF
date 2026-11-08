@@ -65,11 +65,15 @@ jobs:
       - name: Configure npm → Artifactory
         run: jf npm-config --repo-resolve=${{ env.NPM_VIRTUAL }}
 
-      - name: Install dependencies (w/o postinstall)
-        run: jf npm install --omit=dev --ignore-scripts
+      - name: Install dependencies (inkl. devDependencies)
+        run: jf npm install --ignore-scripts
+  # --ignore-scripts verhindert das kaputte postinstall-Skript von Juice Shop
 
       - name: Build server
-        run: npm run build:server --if-present || echo "build:server skipped"
+        run: npm run build:server --if-present
+
+      - name: Run tests
+        run: npm run test:server
 
       # ---- 4b TEST (existing tests, none written by us) ----
       # Server unit tests (Node built-in test runner). "npm test" would also start frontend + API tests (browser/running server).
