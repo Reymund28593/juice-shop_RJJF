@@ -1,0 +1,25 @@
+name: "Frogbot Scan Repository"
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: write
+jobs:
+  scan-repository:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        branch: ["develop"]       # default branch of the Juice Shop fork
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
+      - uses: jfrog/frogbot@v3
+        env:
+          JF_URL: https://${{ vars.JF_HOST }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JF_GIT_BASE_BRANCH: ${{ matrix.branch }}

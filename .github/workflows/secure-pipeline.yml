@@ -1,0 +1,147 @@
+# workflow-version: 3  (compile step = 'jf npm install --ignore-scripts'; Juice Shop has no package-lock.json, so 'npm ci' cannot be used)
+name: secure-pipeline
+
+on:
+  push:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+    inputs:
+      enforce_gate:
+        description: "Fail the build on Xray policy violations (set to false only for demo comparison)"
+        type: choice
+        options: ["true", "false"]
+        default: "true"
+
+# one run per branch at a time (a newer push cancels the older run)
+concurrency:
+  group: secure-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write   # OIDC token exchange with the JFrog Platform (no long-lived secrets)
+  contents: read
+
+env:
+  JF_HOST: ${{ vars.JF_HOST }}              # e.g. reyjtrial.jfrog.io (repository variable, without https://)
+  JF_URL: https://${{ vars.JF_HOST }}
+  OIDC_PROVIDER: github-oidc                # name of the OIDC integration in JFrog
+  NPM_VIRTUAL: juice-npm-virtual            # must match the repository key in Artifactory
+  DOCKER_VIRTUAL: juice-docker-virtual
+  DOCKER_DEV: juice-docker-dev-local
+  DOCKER_PROD: juice-docker-prod-local
+  GENERIC_LOCAL: juice-generic-local
+  IMAGE: juice-shop
+  TAG: ${{ github.sha }}                    # immutable, traceable tag - never "latest"
+  ENFORCE_GATE: ${{ github.event.inputs.enforce_gate || 'true' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04                   # pinned: "ubuntu-latest" will move to Ubuntu 26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22                  # package.json engines: 22 - 26
+
+      - name: Set up JFrog CLI (OIDC)
+        id: jfrog
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          oidc-provider-name: ${{ env.OIDC_PROVIDER }}
+
+      # ---- Secure dependency resolution: npm ONLY via the Artifactory virtual repo ----
+      - name: Point npm at Artifactory
+        env:
+          TOKEN: ${{ steps.jfrog.outputs.oidc-token }}
+        run: |
+          echo "::add-mask::${TOKEN}"
+          URL="//${JF_HOST}/artifactory/api/npm/${NPM_VIRTUAL}/"
+          {
+            echo "registry=https:${URL}"
+            echo "${URL}:_authToken=${TOKEN}"
+          } > ~/.npmrc
+          # Build-info collection for npm (dependencies, checksums)
+          jf npm-config --repo-resolve="${NPM_VIRTUAL}" --repo-deploy="${NPM_VIRTUAL}"
+
+      # ---- 4a COMPILE ----
+      # All dependencies incl. devDependencies (TypeScript compiler, test tooling).
+      # "npm ci" is NOT possible: the repository has no package-lock.json, so "npm install" is used.
+      # The resolved versions are recorded in the build-info (traceability).
+      # --ignore-scripts: Juice Shop's postinstall (frontend install/build) runs in the Docker build instead.
+      # The server is compiled strictly here: a compile error fails the pipeline.
+      - name: Compile (resolve dependencies + build server)
+        run: |
+          jf npm install --ignore-scripts
+          npm run build:server
+
+      # ---- 4b TEST (existing tests, none written by us) ----
+      - name: Run tests
+        run: npm run test:server
+
+      # ---- 4c PACKAGE ----
+      - name: Docker login (Artifactory)
+        env:
+          TOKEN: ${{ steps.jfrog.outputs.oidc-token }}
+          USER_: ${{ steps.jfrog.outputs.oidc-user }}
+        run: echo "${TOKEN}" | docker login "${JF_HOST}" -u "${USER_}" --password-stdin
+
+      - name: Build image (base images + npm packages via Artifactory)
+        run: |
+          docker build \
+            --secret id=npmrc,src="$HOME/.npmrc" \
+            --build-arg REGISTRY="${JF_HOST}" \
+            --build-arg DOCKER_VIRTUAL="${DOCKER_VIRTUAL}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --build-arg BUILD_NUMBER="${GITHUB_RUN_NUMBER}" \
+            -t "${JF_HOST}/${DOCKER_VIRTUAL}/${IMAGE}:${TAG}" .
+
+      - name: Push image + record in build-info
+        id: push
+        run: jf docker push "${JF_HOST}/${DOCKER_VIRTUAL}/${IMAGE}:${TAG}"
+
+      # ---- Traceability: complete manual build-info sequence (do not mix with auto-publish) ----
+      - name: Publish build-info
+        run: |
+          jf rt bce
+          jf rt bag
+          jf rt bp
+
+      # ---- QUALITY GATE: Xray build scan, fails the pipeline on policy violation (exit code 3) ----
+      - name: Xray scan gate
+        run: jf build-scan --fail="${ENFORCE_GATE}"
+
+      # ---- Evidence: Xray scan export (JSON) + CycloneDX SBOM of the image (runs even if the gate is red) ----
+      - name: Export Xray scan + CycloneDX SBOM
+        if: ${{ always() && steps.push.conclusion == 'success' }}
+        run: ./scripts/export-xray-evidence.sh
+
+      - name: Store evidence in Artifactory
+        if: ${{ always() && steps.push.conclusion == 'success' }}
+        run: jf rt upload "evidence/*" "${GENERIC_LOCAL}/${IMAGE}/${TAG}/" --flat=false || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: ignore
+
+  # ---- Promotion: only after a green gate; manual approval via the GitHub environment "production" ----
+  promote:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: jfrog/setup-jfrog-cli@v4
+        with:
+          oidc-provider-name: ${{ env.OIDC_PROVIDER }}
+      - name: Promote build (copy dev -> prod repo)
+        run: |
+          jf rt build-promote "${JFROG_CLI_BUILD_NAME}" "${JFROG_CLI_BUILD_NUMBER}" "${DOCKER_PROD}" \
+            --source-repo="${DOCKER_DEV}" --status=released --copy=true \
+            --comment="Promoted after passing Xray gate"

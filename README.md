@@ -1,246 +1,215 @@
-# ![Juice Shop Logo](https://raw.githubusercontent.com/juice-shop/juice-shop/master/frontend/src/assets/public/images/JuiceShop_Logo_100px.png) OWASP Juice Shop
+# OWASP Juice Shop – Secure Supply Chain Pipeline (GitHub Actions + JFrog Platform)
 
-[![OWASP Flagship](https://img.shields.io/badge/owasp-flagship%20project-48A646.svg)](https://owasp.org/projects/#sec-flagships)
-[![GitHub release](https://img.shields.io/github/release/juice-shop/juice-shop.svg)](https://github.com/juice-shop/juice-shop/releases/latest)
-[![Twitter Follow](https://img.shields.io/twitter/follow/owasp_juiceshop.svg?style=social&label=Follow)](https://twitter.com/owasp_juiceshop)
-[![Subreddit subscribers](https://img.shields.io/reddit/subreddit-subscribers/owasp_juiceshop?style=social)](https://reddit.com/r/owasp_juiceshop)
+A CI/CD pipeline that builds [OWASP Juice Shop](https://github.com/juice-shop/juice-shop) (Node.js / TypeScript) into a
+hardened Docker image. All dependencies come through JFrog Artifactory, every build is scanned by JFrog Xray, and an image
+is only promoted to the production repository after it has passed the security gate.
 
-[![CI/CD Pipeline](https://github.com/juice-shop/juice-shop/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/juice-shop/juice-shop/actions/workflows/ci.yml)
-[![Release Pipeline](https://github.com/juice-shop/juice-shop/actions/workflows/release.yml/badge.svg)](https://github.com/juice-shop/juice-shop/actions/workflows/release.yml)
-[![Coverage Status](https://coveralls.io/repos/github/juice-shop/juice-shop/badge.svg?branch=develop)](https://coveralls.io/github/juice-shop/juice-shop?branch=develop)
-[![Cypress tests](https://img.shields.io/endpoint?url=https://dashboard.cypress.io/badge/simple/3hrkhu/develop&style=flat&logo=cypress)](https://dashboard.cypress.io/projects/3hrkhu/runs)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/223/badge)](https://www.bestpractices.dev/projects/223)
-![GitHub stars](https://img.shields.io/github/stars/juice-shop/juice-shop.svg?label=GitHub%20%E2%98%85&style=flat)
-[![Static Badge](https://img.shields.io/badge/OWASP-Code_of_Conduct-blue)](CODE_OF_CONDUCT.md)
+**Stack:** GitHub Actions · JFrog Artifactory · JFrog Xray · JFrog CLI · Frogbot · Docker · Kubernetes
 
-> [The most trustworthy online shop out there.](https://twitter.com/dschadow/status/706781693504589824)
-> ([@dschadow](https://github.com/dschadow)) —
-> [The best juice shop on the whole internet!](https://twitter.com/shehackspurple/status/907335357775085568)
-> ([@shehackspurple](https://twitter.com/shehackspurple)) —
-> [Actually the most bug-free vulnerable application in existence!](https://youtu.be/TXAztSpYpvE?t=26m35s)
-> ([@vanderaj](https://twitter.com/vanderaj)) —
-> [First you 😂😂then you 😢](https://twitter.com/kramse/status/1073168529405472768)
-> ([@kramse](https://twitter.com/kramse)) —
-> [But this doesn't have anything to do with juice.](https://twitter.com/coderPatros/status/1199268774626488320)
-> ([@coderPatros' wife](https://twitter.com/coderPatros))
+## What the pipeline does
 
-OWASP Juice Shop is probably the most modern and sophisticated insecure web application! It can be used in security
-trainings, awareness demos, CTFs and as a guinea pig for security tools! Juice Shop encompasses vulnerabilities from the
-entire
-[OWASP Top Ten](https://owasp.org/www-project-top-ten) along with many other security flaws found in real-world
-applications!
+```mermaid
+flowchart LR
+  Dev[Push / manual run] --> GH[GitHub Actions]
+  GH -- OIDC short-lived token --> JF
+  subgraph JF[JFrog Platform]
+    NR[(npm virtual repo)]
+    DV[(docker virtual repo)]
+    DEV[(docker-dev-local)]
+    PROD[(docker-prod-local)]
+    GEN[(generic-local: evidence)]
+    X{{Xray policies + watches}}
+    BI[(build-info)]
+  end
+  Reg[npmjs / Docker Hub / gcr.io] --> NR
+  Reg --> DV
+  GH -- resolve npm packages --> NR
+  GH -- base images --> DV
+  GH -- push image --> DEV
+  GH -- build-info --> BI
+  BI --> X
+  X -- gate --> GH
+  GH -- evidence --> GEN
+  GH -- promote after green gate + approval --> PROD
+  Frogbot[Frogbot: source scan] --> X
+```
 
-![Juice Shop Screenshot Slideshow](screenshots/slideshow.gif)
+| Stage | What happens |
+|---|---|
+| **Authenticate** | `jfrog/setup-jfrog-cli` exchanges the GitHub OIDC token for a short-lived JFrog token. No long-lived secrets are stored for the pipeline. |
+| **Resolve dependencies** | npm is pointed at the Artifactory virtual repo `juice-npm-virtual` (`.npmrc` is generated at runtime). |
+| **Compile** | `jf npm install --ignore-scripts` installs all dependencies and records them in the build-info, then `npm run build:server` compiles the TypeScript server. The repository has no `package-lock.json`, so `npm install` is used instead of `npm ci`. `--ignore-scripts` skips the `postinstall` hook; the frontend is built inside the Docker build instead. |
+| **Test** | `npm run test:server` runs the project's existing server unit tests. |
+| **Package** | Multi-stage `docker build`. Base images are pulled from `juice-docker-virtual`, npm packages from `juice-npm-virtual`. The registry credentials are passed as a BuildKit secret and never end up in an image layer. The runtime image is distroless and runs as user `65532`. |
+| **Publish** | `jf docker push` to `juice-docker-dev-local`, tagged with the commit SHA (no `latest`). Build-info is published with `jf rt bce` / `bag` / `bp`. |
+| **Security gate** | `jf build-scan --fail=true`: the run fails when Xray reports a policy violation (Critical severity blocks). |
+| **Evidence** | `scripts/export-xray-evidence.sh` exports the Xray scan result (`xray-scan.json`) and a CycloneDX SBOM (`sbom-cyclonedx.json`). Both are validated, stored in `juice-generic-local/juice-shop/<tag>/` and attached to the run as a GitHub artifact. This step also runs when the gate is red. |
+| **Promote** | After a green gate and a manual approval (GitHub environment `production`), `jf rt build-promote` copies the build from `juice-docker-dev-local` to `juice-docker-prod-local`. The image is promoted, not rebuilt. |
 
-For a detailed introduction, full list of features and architecture overview please visit the official project page:
-<https://owasp-juice.shop>
+## Repository layout
 
-## Table of contents
+| Path | Purpose |
+|---|---|
+| `.github/workflows/secure-pipeline.yml` | Main pipeline: compile → test → package → scan gate → evidence → promote |
+| `.github/workflows/frogbot-scan-pull-request.yml` | Frogbot scan of the dependencies changed in a pull request |
+| `.github/workflows/frogbot-scan-repository.yml` | Frogbot scan of the default branch (manual / nightly) |
+| `Dockerfile` | Multi-stage build, upstream hardening steps kept, dependencies only via Artifactory |
+| `deploy/k8s/deployment.yaml`, `service.yaml` | Kubernetes Deployment (non-root, probes, resource limits) and Service |
+| `scripts/bootstrap-jfrog-repos.sh` | Creates the Artifactory repositories (bash) |
+| `scripts/preflight-check.sh` | Checks local tools, Docker/BuildKit and the JFrog connection (bash) |
+| `scripts/export-xray-evidence.sh` | Exports and validates the Xray scan and the CycloneDX SBOM |
+| `scripts/windows/*.ps1` | PowerShell versions of the bootstrap and preflight scripts |
 
-- [Setup](#setup)
-    - [From Sources](#from-sources)
-    - [Packaged Distributions](#packaged-distributions)
-    - [Docker Container](#docker-container)
-    - [Vagrant](#vagrant)
-- [Demo](#demo)
-- [Documentation](#documentation)
-    - [Node.js version compatibility](#nodejs-version-compatibility)
-    - [Troubleshooting](#troubleshooting)
-    - [Official companion guide](#official-companion-guide)
-- [Contributing](#contributing)
-- [References](#references)
-- [Merchandise](#merchandise)
-- [Donations](#donations)
-- [Contributors](#contributors)
-- [Licensing](#licensing)
+## Artifactory repositories
+
+| Repository | Type | Purpose |
+|---|---|---|
+| `juice-npm-remote` | remote | proxy for npmjs |
+| `juice-npm-local` | local | internal npm packages |
+| `juice-npm-virtual` | virtual | single resolution URL for npm (local + remote) |
+| `juice-docker-remote` | remote | proxy for Docker Hub (`node` base image) |
+| `juice-gcr-remote` | remote | proxy for `gcr.io` (distroless runtime image) |
+| `juice-docker-dev-local` | local | images from CI, before promotion |
+| `juice-docker-prod-local` | local | promoted images only |
+| `juice-docker-virtual` | virtual | single resolution URL for Docker (remotes + local repos) |
+| `juice-generic-local` | local | evidence: Xray scan export and SBOM per image tag |
+
+## Prerequisites
+
+**Accounts**
+
+- GitHub repository (fork of Juice Shop) with Actions enabled
+- JFrog Platform (SaaS) with Artifactory and Xray; admin access for the initial setup
+
+**Local tools**
+
+| Tool | Note |
+|---|---|
+| Git, Docker (>= 23, BuildKit) | Docker needs about 15 GB free disk |
+| Node.js + npm | version from `engines` in `package.json` (CI uses Node 22) |
+| JFrog CLI (`jf`) v2 | |
+| `curl`, `unzip`, `jq` | used by the bash scripts |
+| `kubectl` + a local cluster | Docker Desktop Kubernetes, kind or minikube, only for the Kubernetes test |
+
+Windows works natively with the PowerShell scripts in `scripts/windows/` (or via WSL2 with the bash scripts).
+On Apple Silicon add `--platform linux/amd64` when running the CI-built image.
 
 ## Setup
 
-> You can find some less common installation variations as well as instructions to run Juice Shop on a variety of cloud computing providers in
-> [the _Running OWASP Juice Shop_ documentation](https://pwning.owasp-juice.shop/companion-guide/latest/part1/running.html).
+1. **JFrog CLI:** `jf c add <server-id> --url https://<JF_HOST> --access-token <admin-token>`, then verify with `jf rt ping`.
+2. **Repositories:** run `./scripts/bootstrap-jfrog-repos.sh` (bash) or `.\scripts\windows\bootstrap-jfrog-repos.ps1` (PowerShell).
+3. **OIDC integration:** JFrog UI → Administration → General → Manage Integrations → OIDC. Provider name `github-oidc`,
+   provider URL `https://token.actions.githubusercontent.com`, plus an identity mapping for the GitHub repository with
+   permissions to resolve npm and Docker, deploy to `juice-docker-dev-local` and `juice-generic-local`, read Xray results and promote builds.
+4. **GitHub settings** (Settings → Secrets and variables → Actions):
+   - variable `JF_HOST` – host name without scheme, e.g. `mycompany.jfrog.io`
+   - environment `production` with a required reviewer (promotion approval)
+   - for Frogbot: secret `JF_ACCESS_TOKEN` and environment `frogbot`
+5. **Xray:** index `juice-docker-dev-local`, `juice-docker-prod-local`, `juice-npm-remote` and the build; create a
+   Security Policy (Critical → fail build) and a Watch covering the docker repository and the build.
+6. Optional check of the local setup: `./scripts/preflight-check.sh <JF_HOST>` or `.\scripts\windows\preflight-check.ps1 -JfHost <JF_HOST>`.
 
-> Some challenges require an AI/LLM provider to work properly. Check the
-> [_Setting up external dependencies_ documentation](https://pwning.owasp-juice.shop/companion-guide/snapshot/part1/running.html#_setting_up_external_dependencies)
-> for instructions on configuring local or cloud-based AI providers.
+## Running the pipeline
 
-### From Sources
+- **Automatically** on every push (documentation-only changes are ignored), or **manually** under
+  *Actions → secure-pipeline → Run workflow*.
+- Input `enforce_gate` (`true` by default): with `false` the build continues despite policy violations. This is meant for
+  comparing runs with and without the gate.
+- Only one run per branch is active at a time; a newer push cancels the older run.
+- Results: build-info under *Application → Builds* in JFrog, Xray results on the build and the image, evidence in
+  `juice-generic-local/juice-shop/<commit-sha>/` and as the GitHub artifact `evidence-<commit-sha>`.
 
-![GitHub repo size](https://img.shields.io/github/repo-size/juice-shop/juice-shop.svg)
+Juice Shop is intentionally vulnerable, so the gate fails on the unmodified code. A run turns green once the blocking
+findings are fixed (dependency upgrade) or covered by a documented, time-boxed Xray ignore rule.
 
-1. Install [node.js](#nodejs-version-compatibility)
-2. Run `git clone https://github.com/juice-shop/juice-shop.git --depth 1` (or
-   clone [your own fork](https://github.com/juice-shop/juice-shop/fork)
-   of the repository)
-3. Go into the cloned folder with `cd juice-shop`
-4. Run `npm install` (only has to be done before first start or when you change the source code)
-5. Run `npm start`
-6. Browse to <http://localhost:3000>
+## Evidence files
 
-### Packaged Distributions
+| File | Content |
+|---|---|
+| `xray-scan.json` | Xray scan result of the image: vulnerabilities and policy violations |
+| `sbom-cyclonedx.json` | CycloneDX (JSON) software bill of materials of the image |
 
-[![GitHub release](https://img.shields.io/github/downloads/juice-shop/juice-shop/total.svg)](https://github.com/juice-shop/juice-shop/releases/latest)
-[![SourceForge](https://img.shields.io/sourceforge/dm/juice-shop?label=sourceforge%20downloads)](https://sourceforge.net/projects/juice-shop/)
-[![SourceForge](https://img.shields.io/sourceforge/dt/juice-shop?label=sourceforge%20downloads)](https://sourceforge.net/projects/juice-shop/)
+Quick check of a downloaded SBOM:
 
-1. Install a 64bit [node.js](#nodejs-version-compatibility) on your Windows, MacOS or Linux machine
-2. Download `juice-shop-<version>_<node-version>_<os>_x64.zip` (or
-   `.tgz`) attached to
-   [latest release](https://github.com/juice-shop/juice-shop/releases/latest)
-3. Unpack and `cd` into the unpacked folder
-4. Run `npm start`
-5. Browse to <http://localhost:3000>
+```bash
+jq '{bomFormat, specVersion, components: (.components | length)}' sbom-cyclonedx.json
+```
+```powershell
+Get-Content .\sbom-cyclonedx.json -Raw | ConvertFrom-Json | Select-Object bomFormat, specVersion, @{n='components';e={$_.components.Count}}
+```
 
-> Each packaged distribution includes some binaries for `sqlite3` and
-> `libxmljs2` bound to the OS and node.js version which `npm install` was
-> executed on.
+Download the evidence of a run with `gh run download <run-id> -n evidence-<commit-sha>`.
 
-### Docker Container
+## Running the image
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/bkimminich/juice-shop.svg)](https://hub.docker.com/r/bkimminich/juice-shop)
-![Docker Stars](https://img.shields.io/docker/stars/bkimminich/juice-shop.svg)
-[![](https://images.microbadger.com/badges/image/bkimminich/juice-shop.svg)](https://microbadger.com/images/bkimminich/juice-shop
-"Get your own image badge on microbadger.com")
-[![](https://images.microbadger.com/badges/version/bkimminich/juice-shop.svg)](https://microbadger.com/images/bkimminich/juice-shop
-"Get your own version badge on microbadger.com")
+```bash
+# from an exported archive
+docker load -i juice-shop.tar.gz
+docker run --rm -p 3000:3000 <image-name-shown-by-docker-load>      # http://localhost:3000
 
-1. Install [Docker](https://www.docker.com)
-2. Run `docker pull bkimminich/juice-shop`
-3. Run `docker run --rm -p 127.0.0.1:3000:3000 bkimminich/juice-shop`
-4. Browse to <http://localhost:3000> (on macOS and Windows browse to
-   <http://192.168.99.100:3000> if you are using docker-machine instead of the native docker installation)
+# from Artifactory (promoted image)
+docker login <JF_HOST>
+docker run --rm -p 3000:3000 <JF_HOST>/juice-docker-prod-local/juice-shop:<commit-sha>
+```
 
-### Vagrant
+Create the archive (for example for offline use):
 
-1. Install [Vagrant](https://www.vagrantup.com/downloads.html) and
-   [Virtualbox](https://www.virtualbox.org/wiki/Downloads)
-2. Run `git clone https://github.com/juice-shop/juice-shop.git` (or
-   clone [your own fork](https://github.com/juice-shop/juice-shop/fork)
-   of the repository)
-3. Run `cd vagrant && vagrant up`
-4. Browse to [192.168.56.110](http://192.168.56.110)
+```bash
+docker save -o juice-shop.tar <JF_HOST>/juice-docker-prod-local/juice-shop:<commit-sha>
+gzip juice-shop.tar            # Windows: tar -czf juice-shop.tar.gz juice-shop.tar
+```
 
-## Demo
+### Kubernetes
 
-Feel free to have a look at the latest version of OWASP Juice Shop:
-<http://demo.owasp-juice.shop>
+The manifests in `deploy/k8s/` contain the placeholder `REPLACE_ME/juice-docker-prod-local/juice-shop:REPLACE_TAG`.
+Set the image, then apply:
 
-> This is a deployment-test and sneak-peek instance only! You are __not
-> supposed__ to use this instance for your own hacking endeavours! No
-> guaranteed uptime! Guaranteed stern looks if you break it!
+```bash
+# local cluster (Docker Desktop / kind / minikube): use the locally available image
+docker tag <JF_HOST>/juice-docker-prod-local/juice-shop:<commit-sha> juice-shop:local
+# kind only:  kind load docker-image juice-shop:local
+sed -i 's#image: .*#image: juice-shop:local#' deploy/k8s/deployment.yaml   # PowerShell: edit the image line manually
 
-## Documentation
+kubectl apply -f deploy/k8s/
+kubectl rollout status deployment/juice-shop
+kubectl port-forward svc/juice-shop 3000:80                                # http://localhost:3000
+```
 
-### Node.js version compatibility
+To pull straight from Artifactory, create a pull secret and enable `imagePullSecrets` in the Deployment:
 
-![GitHub package.json dynamic](https://img.shields.io/github/package-json/cpu/juice-shop/juice-shop)
-![GitHub package.json dynamic](https://img.shields.io/github/package-json/os/juice-shop/juice-shop)
+```bash
+kubectl create secret docker-registry artifactory-pull --docker-server=<JF_HOST> \
+  --docker-username=<user> --docker-password=<token>
+```
 
-OWASP Juice Shop officially supports the following versions of
-[node.js](http://nodejs.org) in line with the official
-[node.js LTS schedule](https://github.com/nodejs/LTS) as close as possible. Docker images and packaged distributions are
-offered accordingly.
+## Scan results
 
-| node.js | Supported              | Tested             | [Packaged Distributions](#packaged-distributions) | [Docker images](#docker-container) from `master` | [Docker images](#docker-container) from `develop` |
-|:--------|:-----------------------|:-------------------|:--------------------------------------------------|:-------------------------------------------------|:--------------------------------------------------|
-| 26.x    | :heavy_check_mark:     | :heavy_check_mark: |                                                   |                                                  |                                                   |
-| 25.x    | ( :heavy_check_mark: ) | :x:                |                                                   |                                                  |                                                   |
-| 24.x    | :heavy_check_mark:     | :heavy_check_mark: | Windows (`x64`), MacOS (`x64`), Linux (`x64`)     | `latest` (`linux/amd64`, `linux/arm64`)          | `snapshot` (`linux/amd64`, `linux/arm64`)         |
-| 23.x    | :x:                    | :x:                |                                                   |                                                  |                                                   |
-| 22.x    | :heavy_check_mark:     | :heavy_check_mark: |                                                   |                                                  |                                                   |
-| <22.x   | :x:                    | :x:                |                                                   |                                                  |                                                   |
+The first scans of the unmodified application block the gate with **9 Critical violations**, among them:
 
-Juice Shop is automatically tested _only on the latest `.x` minor version_ of each node.js version mentioned above!
-There is no guarantee that older minor node.js releases will always work with Juice Shop!
-Please make sure you stay up to date with your chosen version.
+| Component | Version | Issue | Fix available |
+|---|---|---|---|
+| `jsonwebtoken` | 0.4.0 / 0.1.0 | CVE-2015-9235 (CVSS 9.8, token signature bypass) | 4.2.2 or later (current major: 9.x) |
+| `express-jwt` | 0.1.3 | CVE-2020-15084 (authorization bypass) | 6.0.0 or later |
+| `lodash` | 2.4.2 | CVE-2019-10744 (prototype pollution) | 4.17.12 or later |
+| `crypto-js` | 3.3.0 | see the Xray violation | see Xray |
+| `decompress` | 4.2.1 | see the Xray violation | no fixed version |
+| `marsdb` | 0.6.11 | see the Xray violation | no fixed version |
 
-### Troubleshooting
+The image scan additionally reports OS packages of the distroless base layer.
 
-[![Gitter](http://img.shields.io/badge/gitter-join%20chat-1dce73.svg)](https://gitter.im/bkimminich/juice-shop)
+## Frogbot
 
-If you need help with the application setup please check 
-[our existing _Troubleshooting_](https://pwning.owasp-juice.shop/companion-guide/latest/part4/troubleshooting.html)
-guide. If this does not solve your issue please post your specific problem or question in the
-[Gitter Chat](https://gitter.im/bkimminich/juice-shop) where community members can best try to help you.
+Two workflows run [Frogbot](https://github.com/jfrog/frogbot) against the source code:
 
-:stop_sign: **Please avoid opening GitHub issues for support requests or questions!**
+- **Pull request scan** (`frogbot-scan-pull-request.yml`) – scans the dependencies changed by a pull request and comments the result on it. Runs in the `frogbot` environment.
+- **Repository scan** (`frogbot-scan-repository.yml`) – scans the default branch (`master`) on demand and nightly; findings are reported as pull requests with fixes.
 
-### Official companion guide
+Source scanning (Frogbot) and image scanning (Xray) complement each other: Frogbot evaluates declared dependencies at commit time, including
+development dependencies; Xray evaluates what is actually inside the image (application files, runtime, OS packages) before it is promoted.
 
-[![Write Goodreads Review](https://img.shields.io/badge/goodreads-write%20review-49557240.svg)](https://www.goodreads.com/review/edit/49557240)
+## Limitations
 
-OWASP Juice Shop comes with an official companion guide eBook. It will give you a complete overview of all
-vulnerabilities found in the application including hints how to spot and exploit them. In the appendix you will even
-find complete step-by-step solutions to every challenge. Extensive documentation of
-[custom re-branding](https://pwning.owasp-juice.shop/companion-guide/latest/part4/customization.html),
-[CTF-support](https://pwning.owasp-juice.shop/companion-guide/latest/part4/ctf.html),
-[trainer's guide](https://pwning.owasp-juice.shop/companion-guide/latest/part4/trainers.html)
-and much more is also included.
-
-[Pwning OWASP Juice Shop](https://leanpub.com/juice-shop) is published under
-[CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/)
-and is available **for free** in PDF, Kindle and ePub format on LeanPub. You can also
-[browse the full content online](https://pwning.owasp-juice.shop)!
-
-[<img alt="Pwning OWASP Juice Shop cover" src="https://raw.githubusercontent.com/juice-shop/pwning-juice-shop/master/docs/modules/ROOT/assets/images/cover.jpg" width="200"/>](https://leanpub.com/juice-shop)
-[<img alt="Pwning OWASP Juice Shop back cover" src="https://raw.githubusercontent.com/juice-shop/pwning-juice-shop/master/docs/modules/ROOT/assets/images/introduction/back.jpg" width="200"/>](https://leanpub.com/juice-shop)
-
-## Contributing
-
-[![GitHub contributors](https://img.shields.io/github/contributors/juice-shop/juice-shop.svg)](https://github.com/juice-shop/juice-shop/graphs/contributors)
-[![JavaScript Style Guide](https://img.shields.io/badge/code%20style-standard-brightgreen.svg)](http://standardjs.com/)
-[![Crowdin](https://d322cqt584bo4o.cloudfront.net/owasp-juice-shop/localized.svg)](https://crowdin.com/project/owasp-juice-shop)
-![GitHub issues by-label](https://img.shields.io/github/issues/juice-shop/juice-shop/help%20wanted.svg)
-![GitHub issues by-label](https://img.shields.io/github/issues/juice-shop/juice-shop/good%20first%20issue.svg)
-
-We are always happy to get new contributors on board! Please check
-[CONTRIBUTING.md](CONTRIBUTING.md) to learn how to
-[contribute to our codebase](CONTRIBUTING.md#code-contributions) or the
-[translation into different languages](CONTRIBUTING.md#i18n-contributions)!
-
-## References
-
-Did you write a blog post, magazine article or do a podcast about or mentioning OWASP Juice Shop? Or maybe you held or
-joined a conference talk or meetup session, a hacking workshop or public training where this project was mentioned?
-
-Add it to our ever-growing list of [REFERENCES.md](REFERENCES.md) by forking and opening a Pull Request!
-
-## Merchandise
-
-* On [Spreadshirt.com](http://shop.spreadshirt.com/juiceshop) and
-  [Spreadshirt.de](http://shop.spreadshirt.de/juiceshop) you can get some swag (Shirts, Hoodies, Mugs) with the official
-  OWASP Juice Shop logo
-* On
-  [StickerYou.com](https://www.stickeryou.com/products/owasp-juice-shop/794)
-  you can get variants of the OWASP Juice Shop logo as single stickers to decorate your laptop with. They can also print
-  magnets, iron-ons, sticker sheets and temporary tattoos.
-
-## Donations
-
-[![](https://img.shields.io/badge/support-owasp%20juice%20shop-blue)](https://owasp.org/donate/?reponame=www-project-juice-shop&title=OWASP+Juice+Shop)
-
-The OWASP Foundation gratefully accepts donations via Stripe. Projects such as Juice Shop can then request reimbursement
-for expenses from the Foundation. If you'd like to express your support of the Juice Shop project, please make sure to
-tick the "Publicly list me as a supporter of OWASP Juice Shop" checkbox on the donation form. You can find our more
-about donations and how they are used here:
-
-<https://pwning.owasp-juice.shop/companion-guide/latest/part3/donations.html>
-
-## Contributors
-
-The OWASP Juice Shop Project Leaders are:
-
-- [Björn Kimminich](https://github.com/bkimminich) aka `bkimminich` [![Keybase PGP](https://img.shields.io/keybase/pgp/bkimminich)](https://keybase.io/bkimminich)
-- [Jannik Hollenbach](https://github.com/J12934) aka `J12934`
-
-For a list of all contributors to the OWASP Juice Shop please visit our
-[HALL_OF_FAME.md](HALL_OF_FAME.md).
-
-## Licensing
-
-[![license](https://img.shields.io/github/license/juice-shop/juice-shop.svg)](LICENSE)
-
-This program is free software: you can redistribute it and/or modify it under the terms of the [MIT license](LICENSE).
-OWASP Juice Shop and any contributions are Copyright © by Bjoern Kimminich & the OWASP Juice Shop contributors
-2014-2026.
-
-![Juice Shop Logo](https://raw.githubusercontent.com/juice-shop/juice-shop/master/frontend/src/assets/public/images/JuiceShop_Logo_400px.png)
+- Juice Shop is intentionally vulnerable; findings are expected.
+- Ignore rules used to get a green run must be time-boxed and carry a justification.
+- Only the server unit tests run in the pipeline; the browser-based frontend and API test suites need a running application and are not part of it.
+- The Xray export API only returns data once the image has been indexed; the export step retries for up to 10 minutes.
