@@ -51,6 +51,7 @@ jobs:
         uses: jfrog/setup-jfrog-cli@v4
         with:
           oidc-provider-name: ${{ env.OIDC_PROVIDER }}
+          disable-auto-build-publish: true   # build-info is published once, explicitly (jf rt bp)
 
       # ---- Secure dependency resolution: npm ONLY via the Artifactory virtual repo ----
       - name: Point npm at Artifactory
@@ -139,6 +140,7 @@ jobs:
       - uses: jfrog/setup-jfrog-cli@v4
         with:
           oidc-provider-name: ${{ env.OIDC_PROVIDER }}
+          disable-auto-build-publish: true   # build-info is published once, explicitly (jf rt bp)
       - name: Promote build (copy dev -> prod repo)
         run: |
           jf rt build-promote "${JFROG_CLI_BUILD_NAME}" "${JFROG_CLI_BUILD_NUMBER}" "${DOCKER_PROD}" \
