@@ -1,4 +1,3 @@
-# workflow-version: 3  (compile step = 'jf npm install --ignore-scripts'; Juice Shop has no package-lock.json, so 'npm ci' cannot be used)
 name: secure-pipeline
 
 on:

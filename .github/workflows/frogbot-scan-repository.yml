@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        branch: ["develop"]       # default branch of the Juice Shop fork
+        branch: ["master"]        # default branch of the fork
     steps:
       - uses: actions/checkout@v4
         with:
