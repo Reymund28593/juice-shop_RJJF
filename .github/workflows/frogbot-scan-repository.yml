@@ -1,4 +1,5 @@
 name: "Frogbot Scan Repository"
+# Scans the whole repository (source / SCA) on demand and nightly; reports findings and opens fix pull requests.
 on:
   workflow_dispatch:
   schedule:
@@ -7,6 +8,7 @@ permissions:
   contents: write
   pull-requests: write
   security-events: write
+  id-token: write                 # OIDC login to the JFrog Platform (no stored JFrog token)
 jobs:
   scan-repository:
     runs-on: ubuntu-latest
@@ -20,6 +22,8 @@ jobs:
       - uses: jfrog/frogbot@v3
         env:
           JF_URL: https://${{ vars.JF_HOST }}
-          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
           JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JF_GIT_BASE_BRANCH: ${{ matrix.branch }}
+          JF_DEPS_REPO: juice-npm-virtual      # resolve dependencies through Artifactory
+        with:
+          oidc-provider-name: github-oidc

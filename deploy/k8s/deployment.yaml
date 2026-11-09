@@ -19,7 +19,9 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: juice-shop
-          image: REPLACE_ME/juice-docker-prod-local/juice-shop:REPLACE_TAG   # or juice-shop:local for kind/minikube
+          # released image (build #28, commit cc00d3c), promoted to the prod repo
+          image: reyjtrial.jfrog.io/juice-docker-prod-local/juice-shop:cc00d3c3eb44c9e152462ecec62b6abe35f4b16b
+          imagePullPolicy: IfNotPresent   # uses the image loaded from juice-shop.tar.gz if present
           ports:
             - containerPort: 3000
           readinessProbe:

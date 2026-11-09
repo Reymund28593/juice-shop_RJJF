@@ -1,20 +1,25 @@
 name: "Frogbot Scan Pull Request"
+# Scans the dependencies of a pull request (source / SCA) and comments new findings on the PR.
 on:
   pull_request_target:
     types: [opened, synchronize]
 permissions:
   pull-requests: write
   contents: read
+  security-events: write
+  id-token: write                 # OIDC login to the JFrog Platform (no stored JFrog token)
 jobs:
   scan-pull-request:
     runs-on: ubuntu-latest
-    environment: frogbot          # create this environment in GitHub (required reviewer = you)
+    environment: frogbot          # GitHub environment; add a required reviewer for PRs from forks
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: jfrog/frogbot@v3     # use the version shown in the current JFrog docs
+      - uses: jfrog/frogbot@v3
         env:
           JF_URL: https://${{ vars.JF_HOST }}
-          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
           JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JF_DEPS_REPO: juice-npm-virtual      # resolve dependencies through Artifactory
+        with:
+          oidc-provider-name: github-oidc
