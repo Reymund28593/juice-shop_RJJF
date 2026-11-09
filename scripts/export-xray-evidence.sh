@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Exports Xray evidence for the pushed image:
-#   evidence/xray-scan.json        Xray scan result (vulnerabilities + violations)
+#   evidence/xray-scan.json        Xray scan data of the image (all vulnerabilities, "Security" export)
+#   evidence/xray-violations.json  policy violations of the image (if Xray returns them)
 #   evidence/sbom-cyclonedx.json   CycloneDX SBOM of the image
+# The raw ZIP responses and their extracted files are kept next to them.
 # The Xray export API returns a ZIP and only works once the image has been indexed and scanned,
 # so each export is retried. Several request variants are tried per attempt (the accepted form of
 # the component identifier differs between Xray versions). Every response is validated; the HTTP
@@ -45,10 +47,14 @@ export_zip () {
         while IFS= read -r f; do
           if jq -e "$check" "$f" >/dev/null 2>&1; then
             cp "$f" "$OUT/$name.json"
+            if [ "$name" = "xray-scan" ]; then
+              vf=$(find "$dir" -type f -name '*Violations_Export*.json' | head -n1)
+              [ -n "$vf" ] && cp "$vf" "$OUT/xray-violations.json"
+            fi
             echo "OK: $name ($(wc -c < "$OUT/$name.json") bytes, request variant $v)"
             return 0
           fi
-        done < <(find "$dir" -type f -name '*.json')
+        done < <(find "$dir" -type f -name '*Security_Export*.json'; find "$dir" -type f -name '*.json' ! -name '*Security_Export*' ! -name '*Violations_Export*' ! -name '*Scan_Status*')
         echo "$name variant $v: ZIP received but no valid content ($(find "$dir" -type f | wc -l) files)" >&2
       else
         echo "$name variant $v attempt $i/$RETRIES: HTTP ${code:-?}: $(head -c 300 "$zip" 2>/dev/null)" >&2

@@ -5,6 +5,7 @@ on:
     paths-ignore:
       - "**.md"
       - "docs/**"
+      - "deploy/**"                   # deployment manifests don't change the build
   workflow_dispatch:
     inputs:
       enforce_gate:
@@ -67,10 +68,9 @@ jobs:
           # Build-info collection for npm (dependencies, checksums)
           jf npm-config --repo-resolve="${NPM_VIRTUAL}" --repo-deploy="${NPM_VIRTUAL}"
 
-      # ---- 4a COMPILE ----
+      # ---- COMPILE ----
       # All dependencies incl. devDependencies (TypeScript compiler, test tooling).
-      # "npm ci" is NOT possible: the repository has no package-lock.json, so "npm install" is used.
-      # The resolved versions are recorded in the build-info (traceability).
+      # Versions come from the committed package-lock.json and are recorded in the build-info (traceability).
       # --ignore-scripts: Juice Shop's postinstall (frontend install/build) runs in the Docker build instead.
       # The server is compiled strictly here: a compile error fails the pipeline.
       - name: Compile (resolve dependencies + build server)
@@ -78,11 +78,11 @@ jobs:
           jf npm install --ignore-scripts
           npm run build:server
 
-      # ---- 4b TEST (existing tests, none written by us) ----
+      # ---- TEST (the project's existing server unit tests) ----
       - name: Run tests
         run: npm run test:server
 
-      # ---- 4c PACKAGE ----
+      # ---- PACKAGE ----
       - name: Docker login (Artifactory)
         env:
           TOKEN: ${{ steps.jfrog.outputs.oidc-token }}
@@ -104,7 +104,7 @@ jobs:
         id: push
         run: jf docker push "${JF_HOST}/${DOCKER_VIRTUAL}/${IMAGE}:${TAG}"
 
-      # ---- Traceability: complete manual build-info sequence (do not mix with auto-publish) ----
+      # ---- Traceability: build-info is collected and published once, here ----
       - name: Publish build-info
         run: |
           jf rt bce
