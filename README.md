@@ -164,12 +164,12 @@ and decides what gets promoted. They complement each other.
 
 ### Run the image
 
-The released image is build #__BUILD_NUMBER__, commit `__SHORT_SHA__`. The archive `juice-shop.tar.gz` is attached to the
-[release](https://github.com/Reymund28593/juice-shop_RJJF/releases/tag/v1.0) (SHA256 `__ARCHIVE_SHA256__`).
+The released image is build #31, commit `dd1eae8`. The archive `juice-shop.tar.gz` is attached to the
+[release](https://github.com/Reymund28593/juice-shop_RJJF/releases/tag/v1.0) (SHA256 `9ee3954d7f7f0722f0a7ed20e65d8ca4ba69dee9c69ce99455cdf8896447161e`).
 
 ```bash
 docker load -i juice-shop.tar.gz
-docker run -d --name juice-shop -p 127.0.0.1:3000:3000 reyjtrial.jfrog.io/juice-docker-prod-local/juice-shop:__IMAGE_TAG__
+docker run -d --name juice-shop -p 127.0.0.1:3000:3000 reyjtrial.jfrog.io/juice-docker-prod-local/juice-shop:dd1eae8af8e9c6d80acac78c170a90000237bfb5
 ```
 
 Then open http://localhost:3000. I bind to `127.0.0.1` on purpose: it's a vulnerable app and shouldn't be reachable from the network.

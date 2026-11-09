@@ -19,8 +19,8 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: juice-shop
-          # released image (build #28, commit cc00d3c), promoted to the prod repo
-          image: reyjtrial.jfrog.io/juice-docker-prod-local/juice-shop:cc00d3c3eb44c9e152462ecec62b6abe35f4b16b
+          # released image (build #31, commit dd1eae8), promoted to the prod repo
+          image: reyjtrial.jfrog.io/juice-docker-prod-local/juice-shop:dd1eae8af8e9c6d80acac78c170a90000237bfb5
           imagePullPolicy: IfNotPresent   # uses the image loaded from juice-shop.tar.gz if present
           ports:
             - containerPort: 3000
